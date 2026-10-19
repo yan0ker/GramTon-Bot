@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Wallet Mini App</title>
+    <!-- SDK Telegram Mini Apps -->
+    <script src="https://telegram.org"></script>
+    <!-- SDK TON Connect UI для авторизации и транзакций -->
+    <script src="https://unpkg.com"></script>
+    <style>
+        :root {
+            --tg-theme-bg-color: #17212b;
+            --tg-theme-text-color: #f5f5f5;
+            --tg-theme-button-color: #2481cc;
+            --tg-theme-button-text-color: #ffffff;
+            --tg-theme-hint-color: #708499;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--tg-theme-bg-color);
+            color: var(--tg-theme-text-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            width: 100%;
+            max-width: 400px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+        }
+        #ton-connect {
+            align-self: flex-end;
+        }
+        .wallet-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .balance-title {
+            font-size: 14px;
+            color: var(--tg-theme-hint-color);
+            margin-bottom: 5px;
+        }
+        .balance-amount {
+            font-size: 32px;
+            font-weight: bold;
+        }
+        .address-box {
+            font-size: 12px;
+            color: var(--tg-theme-hint-color);
+            word-break: break-all;
+            margin-top: 10px;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 8px;
+            border-radius: 8px;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        input {
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(0, 0, 0, 0.2);
+            color: #fff;
+            font-size: 16px;
+        }
+        button.send-btn {
+            padding: 14px;
+            background-color: var(--tg-theme-button-color);
+            color: var(--tg-theme-button-text-color);
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button.send-btn:disabled {
+            background-color: var(--tg-theme-hint-color);
+            opacity: 0.5;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h2>Crypto Pay</h2>
+        <!-- Сюда TON Connect встроит кнопку Подключить Кошелек -->
+        <div id="ton-connect"></div>
+    </div>
+
+    <!-- Карточка баланса -->
+    <div class="wallet-card">
+        <div class="balance-title">Доступный баланс</div>
+        <div class="balance-amount" id="balance">0.00 TON</div>
+        <div class="address-box" id="wallet-address">Кошелек не подключен</div>
+    </div>
+
+    <!-- Форма отправки перевода -->
+    <div class="wallet-card form-group" id="send-section" style="display: none;">
+        <h3>Отправить TON</h3>
+        <input type="text" id="recipient" placeholder="Адрес получателя (EQ... или UQ...)">
+        <input type="number" id="amount" step="0.01" placeholder="Количество TON">
+        <button class="send-btn" id="send-tx-btn">Отправить транзакцию</button>
+    </div>
+</div>
+
+<script>
+    // Инициализация Telegram WebApp
+    const tg = window.Telegram.WebApp;
+    tg.ready();
+    tg.expand();
+
+    // Инициализация TON Connect UI
+    // manifestUrl должен вести на реальный JSON-файл с метаданными вашего приложения!
+    const tonConnectUI = new TON_CONNECT_UI.TonConnectUI({
+        manifestUrl: 'https://githubusercontent.com',
+        buttonRootId: 'ton-connect'
+    });
+
+    const balanceEl = document.getElementById('balance');
+    const addressEl = document.getElementById('wallet-address');
+    const sendSection = document.getElementById('send-section');
+
+    // Отслеживание состояния подключения кошелька
+    tonConnectUI.onStatusChange(async (wallet) => {
+        if (wallet) {
+            // Кошелек подключен. Получаем адрес (в формате Raw, переводим в Friendly-формат)
+            const rawAddress = wallet.account.address;
+            const friendlyAddress = convertToFriendly(rawAddress);
+            
+            addressEl.innerText = friendlyAddress;
+            sendSection.style.display = 'flex';
+
+            // Получаем баланс из блокчейна TON через публичное API
+            fetchBalance(rawAddress);
+        } else {
+            // Кошелек отключен
+            addressEl.innerText = "Кошелек не подключен";
+            balanceEl.innerText = "0.00 TON";
+            sendSection.style.display = 'none';
+        }
+    });
+
+    // Функция запроса баланса (используем бесплатный API toncenter)
+    async function fetchBalance(rawAddress) {
+        try {
+            const response = await fetch(`https://toncenter.com{rawAddress}`);
+            const data = await response.json();
+            if (data.ok) {
+                const nanoGrams = data.result.balance;
+                const tonBalance = (parseInt(nanoGrams) / 1000000000).toFixed(2);
+                balanceEl.innerText = `${tonBalance} TON`;
+            }
+        } catch (e) {
+            console.error("Ошибка при получении баланса", e);
+        }
+    }
+
+    // Обработчик отправки транзакции
+    document.getElementById('send-tx-btn').addEventListener('click', async () => {
+        const recipient = document.getElementById('recipient').value;
+        const amount = document.getElementById('amount').value;
+
+        if (!recipient || !amount) {
+            alert("Заполните адрес и сумму!");
+            return;
+        }
+
+        // Переводим TON в Нанотоны (1 TON = 1,000,000,000 Нанотон)
+        const nanoAmount = (parseFloat(amount) * 1000000000).toString();
+
+        // Структура транзакции для TON Connect
+        const transaction = {
+            validUntil: Math.floor(Date.now() / 1000) + 60, // Срок жизни транзакции 60 сек
+            messages: [
+                {
+                    address: recipient, 
+                    amount: nanoAmount 
+                }
+            ]
+        };
+
+        try {
+            tg.MainButton.setText('Ожидание подписи...').show();
+            // Вызываем окно кошелька (например, Tonkeeper) внутри Telegram для подтверждения
+            const result = await tonConnectUI.sendTransaction(transaction);
+            
+            tg.MainButton.setText('Транзакция отправлена!').setColor('#31b545');
+            alert("Успешно! Хэш транзакции отправлен в сеть.");
+            
+            setTimeout(() => tg.MainButton.hide(), 3000);
+        } catch (e) {
+            console.error(e);
+            tg.MainButton.hide();
+            alert("Ошибка выполнения транзакции или пользователь отклонил её.");
+        }
+    });
+
+    // Утилита для простого форматирования адреса для отображения (заглушка)
+    function convertToFriendly(hexAddress) {
+        return hexAddress.substring(0, 6) + '...' + hexAddress.substring(hexAddress.length - 6);
+    }
+</script>
+</body>
+</html>
